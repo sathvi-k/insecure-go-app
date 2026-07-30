@@ -37,10 +37,11 @@ type User struct {
 
 // VULNERABILITY 1: Hardcoded credentials
 const (
-	AdminPassword = "admin123"
+	AdminPassword = ""
 	APIKey        = "sk-1234567890abcdef"
-	DBPassword    = "root:password123@tcp(localhost:3306)/mydb"
 )
+
+var DBPassword = os.Getenv("DB_PASSWORD")
 
 func main() {
 	// VULNERABILITY 2: Weak secret key for JWT
@@ -72,9 +73,9 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
 
 	// Direct string concatenation in SQL query - SQL Injection vulnerability
-	query := "SELECT id, username, email FROM users WHERE username = '" + username + "'"
+	query := "SELECT id, username, email FROM users WHERE username = ?"
 
-	rows, err := db.Query(query)
+	rows, err := db.Query(query, username)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -95,14 +96,27 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 func execHandler(w http.ResponseWriter, r *http.Request) {
 	cmd := r.FormValue("cmd")
 
-	// Direct execution of user input - Command Injection vulnerability
-	output, err := exec.Command("sh", "-c", cmd).Output()
+	var output []byte
+	var err error
+	switch cmd {
+	case "date":
+		output, err = exec.Command("date").Output()
+	case "uptime":
+		output, err = exec.Command("uptime").Output()
+	case "whoami":
+		output, err = exec.Command("whoami").Output()
+	default:
+		http.Error(w, "Command not allowed", http.StatusBadRequest)
+		return
+	}
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.Write(output)
+	_ = output
+	w.Write([]byte("Command executed successfully"))
 }
 
 // VULNERABILITY 6: Path Traversal
@@ -132,14 +146,14 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 func templateHandler(w http.ResponseWriter, r *http.Request) {
 	userTemplate := r.URL.Query().Get("template")
 
-	// Parsing user-controlled template - SSTI vulnerability
-	tmpl, err := template.New("user").Parse(userTemplate)
+	const safeTemplate = "User input: {{.Input}}"
+	tmpl, err := template.New("user").Parse(safeTemplate)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	tmpl.Execute(w, nil)
+	tmpl.Execute(w, map[string]string{"Input": userTemplate})
 }
 
 // VULNERABILITY 9: Insecure file upload
@@ -154,11 +168,22 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// No validation of file type or content
 	content, _ := ioutil.ReadAll(file)
 
-	// Saving file with original name without sanitization
-	uploadPath := filepath.Join("/uploads", header.Filename)
-	ioutil.WriteFile(uploadPath, content, 0777) // Insecure permissions
+	// Saving file with sanitized name to prevent path traversal
+	safeName := filepath.Base(filepath.Clean("/" + header.Filename))
+	if safeName == "." || safeName == "/" || safeName == "" {
+		http.Error(w, "invalid filename", http.StatusBadRequest)
+		return
+	}
+	uploadPath := filepath.Join("/uploads", safeName)
+	absBase, _ := filepath.Abs("/uploads")
+	absPath, _ := filepath.Abs(uploadPath)
+	if absPath != filepath.Join(absBase, safeName) {
+		http.Error(w, "invalid filename", http.StatusBadRequest)
+		return
+	}
+	ioutil.WriteFile(absPath, content, 0600)
 
-	fmt.Fprintf(w, "File uploaded to: %s", uploadPath)
+	fmt.Fprintf(w, "File uploaded to: %s", absPath)
 }
 
 // VULNERABILITY 10: Open Redirect
