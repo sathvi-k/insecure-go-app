@@ -37,9 +37,9 @@ type User struct {
 
 // VULNERABILITY 1: Hardcoded credentials
 const (
-	AdminPassword = "admin123"
+	AdminPassword = ""
 	APIKey        = "sk-1234567890abcdef"
-	DBPassword    = "root:password123@tcp(localhost:3306)/mydb"
+	DBPassword    = os.Getenv("DB_PASSWORD")
 )
 
 func main() {
@@ -71,10 +71,9 @@ func main() {
 func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
 
-	// Direct string concatenation in SQL query - SQL Injection vulnerability
-	query := "SELECT id, username, email FROM users WHERE username = '" + username + "'"
+	query := "SELECT id, username, email FROM users WHERE username = ?"
 
-	rows, err := db.Query(query)
+	rows, err := db.Query(query, username)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -91,12 +90,24 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Users: %v", users)
 }
 
-// VULNERABILITY 5: Command Injection
 func execHandler(w http.ResponseWriter, r *http.Request) {
 	cmd := r.FormValue("cmd")
 
-	// Direct execution of user input - Command Injection vulnerability
-	output, err := exec.Command("sh", "-c", cmd).Output()
+	var output []byte
+	var err error
+	switch cmd {
+	case "date":
+		output, err = exec.Command("date").Output()
+	case "uptime":
+		output, err = exec.Command("uptime").Output()
+	case "hostname":
+		output, err = exec.Command("hostname").Output()
+	case "whoami":
+		output, err = exec.Command("whoami").Output()
+	default:
+		http.Error(w, "command not allowed", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -105,12 +116,22 @@ func execHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(output)
 }
 
-// VULNERABILITY 6: Path Traversal
 func fileHandler(w http.ResponseWriter, r *http.Request) {
 	filename := r.URL.Query().Get("name")
 
-	// No sanitization of file path - Path Traversal vulnerability
-	content, err := ioutil.ReadFile(filename)
+	var content []byte
+	var err error
+	switch filename {
+	case "readme":
+		content, err = ioutil.ReadFile("/var/www/files/readme.txt")
+	case "license":
+		content, err = ioutil.ReadFile("/var/www/files/license.txt")
+	case "help":
+		content, err = ioutil.ReadFile("/var/www/files/help.txt")
+	default:
+		http.Error(w, "file not allowed", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -130,16 +151,16 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 // VULNERABILITY 8: Server-Side Template Injection
 func templateHandler(w http.ResponseWriter, r *http.Request) {
-	userTemplate := r.URL.Query().Get("template")
+	userInput := r.URL.Query().Get("template")
 
-	// Parsing user-controlled template - SSTI vulnerability
-	tmpl, err := template.New("user").Parse(userTemplate)
+	const safeTemplate = "<html><body><p>{{.}}</p></body></html>"
+	tmpl, err := template.New("user").Parse(safeTemplate)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	tmpl.Execute(w, nil)
+	tmpl.Execute(w, userInput)
 }
 
 // VULNERABILITY 9: Insecure file upload
@@ -154,19 +175,38 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// No validation of file type or content
 	content, _ := ioutil.ReadAll(file)
 
-	// Saving file with original name without sanitization
-	uploadPath := filepath.Join("/uploads", header.Filename)
-	ioutil.WriteFile(uploadPath, content, 0777) // Insecure permissions
+	safeName := filepath.Base(filepath.Clean("/" + header.Filename))
+	if safeName == "." || safeName == "/" || safeName == "" {
+		http.Error(w, "invalid filename", http.StatusBadRequest)
+		return
+	}
+	uploadPath := filepath.Join("/uploads", safeName)
+	ioutil.WriteFile(uploadPath, content, 0600)
 
 	fmt.Fprintf(w, "File uploaded to: %s", uploadPath)
 }
 
 // VULNERABILITY 10: Open Redirect
 func redirectHandler(w http.ResponseWriter, r *http.Request) {
-	url := r.URL.Query().Get("url")
+	rawURL := r.URL.Query().Get("url")
 
-	// Redirecting to user-supplied URL without validation
-	http.Redirect(w, r, url, http.StatusFound)
+	switch rawURL {
+	case "login":
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	case "user":
+		http.Redirect(w, r, "/user", http.StatusFound)
+		return
+	case "search":
+		http.Redirect(w, r, "/search", http.StatusFound)
+		return
+	case "upload":
+		http.Redirect(w, r, "/upload", http.StatusFound)
+		return
+	default:
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 }
 
 // VULNERABILITY 11: Insecure JWT validation
