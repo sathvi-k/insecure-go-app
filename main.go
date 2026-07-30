@@ -37,9 +37,9 @@ type User struct {
 
 // VULNERABILITY 1: Hardcoded credentials
 const (
-	AdminPassword = "admin123"
+	AdminPassword = ""
 	APIKey        = "sk-1234567890abcdef"
-	DBPassword    = "root:password123@tcp(localhost:3306)/mydb"
+	DBPassword    = os.Getenv("DB_PASSWORD")
 )
 
 func main() {
@@ -71,10 +71,9 @@ func main() {
 func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
 
-	// Direct string concatenation in SQL query - SQL Injection vulnerability
-	query := "SELECT id, username, email FROM users WHERE username = '" + username + "'"
+	query := "SELECT id, username, email FROM users WHERE username = ?"
 
-	rows, err := db.Query(query)
+	rows, err := db.Query(query, username)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -109,14 +108,34 @@ func execHandler(w http.ResponseWriter, r *http.Request) {
 func fileHandler(w http.ResponseWriter, r *http.Request) {
 	filename := r.URL.Query().Get("name")
 
-	// No sanitization of file path - Path Traversal vulnerability
-	content, err := ioutil.ReadFile(filename)
+	baseDir := "/var/www/files"
+	cleanName := filepath.Base(filepath.Clean("/" + filename))
+	safePath := filepath.Join(baseDir, cleanName)
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	absFile, err := filepath.Abs(safePath)
+	if err != nil || (absFile != absBase && !hasPrefixDir(absFile, absBase)) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	content, err := ioutil.ReadFile(absFile)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
 	w.Write(content)
+}
+
+func hasPrefixDir(path, prefix string) bool {
+	if len(path) < len(prefix)+1 {
+		return false
+	}
+	return path[:len(prefix)] == prefix && path[len(prefix)] == os.PathSeparator
 }
 
 // VULNERABILITY 7: Cross-Site Scripting (XSS)
@@ -132,14 +151,14 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 func templateHandler(w http.ResponseWriter, r *http.Request) {
 	userTemplate := r.URL.Query().Get("template")
 
-	// Parsing user-controlled template - SSTI vulnerability
-	tmpl, err := template.New("user").Parse(userTemplate)
+	const safeTemplate = "User provided template: {{.Template}}"
+	tmpl, err := template.New("user").Parse(safeTemplate)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	tmpl.Execute(w, nil)
+	tmpl.Execute(w, map[string]string{"Template": userTemplate})
 }
 
 // VULNERABILITY 9: Insecure file upload
@@ -154,11 +173,23 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// No validation of file type or content
 	content, _ := ioutil.ReadAll(file)
 
-	// Saving file with original name without sanitization
-	uploadPath := filepath.Join("/uploads", header.Filename)
-	ioutil.WriteFile(uploadPath, content, 0777) // Insecure permissions
+	// Sanitize filename to prevent path traversal
+	safeName := filepath.Base(filepath.Clean("/" + header.Filename))
+	if safeName == "." || safeName == "/" || safeName == "" {
+		http.Error(w, "invalid filename", http.StatusBadRequest)
+		return
+	}
+	uploadDir := "/uploads"
+	uploadPath := filepath.Join(uploadDir, safeName)
+	absBase, _ := filepath.Abs(uploadDir)
+	absPath, _ := filepath.Abs(uploadPath)
+	if absPath != filepath.Join(absBase, safeName) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	ioutil.WriteFile(absPath, content, 0600)
 
-	fmt.Fprintf(w, "File uploaded to: %s", uploadPath)
+	fmt.Fprintf(w, "File uploaded to: %s", absPath)
 }
 
 // VULNERABILITY 10: Open Redirect
