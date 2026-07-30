@@ -36,10 +36,10 @@ type User struct {
 }
 
 // VULNERABILITY 1: Hardcoded credentials
-const (
-	AdminPassword = "admin123"
-	APIKey        = "sk-1234567890abcdef"
-	DBPassword    = "root:password123@tcp(localhost:3306)/mydb"
+var (
+	AdminPassword = os.Getenv("ADMIN_PASSWORD")
+	APIKey        = os.Getenv("API_KEY")
+	DBPassword    = os.Getenv("DB_PASSWORD")
 )
 
 func main() {
