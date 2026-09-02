@@ -13,7 +13,7 @@ require (
 	github.com/gorilla/mux v1.7.0
 
 	// VULNERABLE: yaml.v2 has known vulnerabilities
-	gopkg.in/yaml.v2 v2.2.2
+	gopkg.in/yaml.v2 v2.2.8
 )
 
 require google.golang.org/appengine v1.6.8 // indirect
