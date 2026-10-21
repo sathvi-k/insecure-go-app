@@ -11,8 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/dgrijalva/jwt-go"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/mux"
 	"gopkg.in/yaml.v2"
 )
